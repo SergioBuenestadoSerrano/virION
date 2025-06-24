@@ -119,7 +119,7 @@ def get_arguments():
                              required=False, default=8, help="Filter on a minimum average read quality score. Default: 8")
 
     basecall_group.add_argument("--trim", type=str, dest="trim",
-                             required=False, default="primers", help="Specify what to trim. Options are 'none', 'all', 'adapters', and 'primers'. Choose 'adapters' to just trim adapters. The 'primers' choice will trim adapters and primers, but not barcodes. The 'none' choice is equivelent to using --no-trim. Default: primers")
+                             required=False, default="adapters", help="Specify what to trim. Options are 'none', 'all', and 'adapters'. The default behaviour is to trim all detected adapters, primers, and barcodes. Choose 'adapters' to just trim adapters. The 'none' choice is equivelent to using --no-trim. Note that this only applies to DNA. RNA adapters are always trimmed. Default: adapters")
 
     basecall_group.add_argument("--headcrop", type=int, dest="headcrop", required=False,
                              default=20, help="Trim n nucleotides from start of read. Default: 20")
@@ -265,15 +265,15 @@ def reorganize_demux(out_barcoding_dir):
     for filename in os.listdir(out_barcoding_dir):
         if filename.endswith('.fastq'):
             fastq_file_path = os.path.join(out_barcoding_dir, filename)
-            with open(fastq_file_path, 'rb') as f_in:
-                with gzip.open(os.path.join(out_barcoding_dir, filename + '.gz'), 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
-            os.remove(fastq_file_path)
+            # with open(fastq_file_path, 'rb') as f_in:
+            #     with gzip.open(os.path.join(out_barcoding_dir, filename + '.gz'), 'wb') as f_out:
+            #         shutil.copyfileobj(f_in, f_out)
+            # os.remove(fastq_file_path)
 
             if 'barcode' in filename:
-                barcode_folder = os.path.join(out_barcoding_dir, filename.split('_')[1].split('.')[0])
+                barcode_folder = os.path.join(out_barcoding_dir, filename.split('_')[2].split('.')[0])
                 os.makedirs(barcode_folder, exist_ok=True)
-                shutil.move(os.path.join(out_barcoding_dir, filename + '.gz'), barcode_folder)
+                shutil.move(fastq_file_path, barcode_folder)
 
 
 def basecalling_ion(input_dir, out_basecalling_dir, config='dna_r9.4.1_450bps_fast.cfg', records=0):
@@ -346,7 +346,7 @@ def barcoding_ion(out_basecalling_dir, out_barcoding_dir, require_barcodes_both_
         require_barcodes_both_ends = ""
 
     cmd = ["guppy_barcoder", "-i", out_basecalling_dir, "-s", out_barcoding_dir, "-r", gpu_device, require_barcodes_both_ends,
-           "--barcode_kits", barcode_kit, "-t", str(threads), '--detect_barcodes', '--enable_trim_barcodes', '--detect_primer', '--trim_primers', '--detect_adapter', '--trim_adapters', "--fastq_out", "--compress_fastq"]
+           "--barcode_kits", barcode_kit, "-t", str(threads), '--detect_barcodes', '--enable_trim_barcodes', '--detect_primer', '--trim_primers', '--detect_adapter', '--trim_adapters', "--fastq_out"]
 
     print(cmd)
     execute_subprocess(cmd, isShell=False)
@@ -354,17 +354,10 @@ def barcoding_ion(out_basecalling_dir, out_barcoding_dir, require_barcodes_both_
 
 def rename_files(output_samples):
 
-    with open(output_samples, "w+") as bc_output:
-        for bc_line in sum_files:
-            with gzip.open(bc_line, "rb") as bcl:
-                for line in bcl:
-                    bc_output.write(line.decode())
-    # print(output_samples)
-
-    cmd_compress = ['bgzip', output_samples, '--threads', str(args.threads)]
-
-    # print(cmd_compress)
-    execute_subprocess(cmd_compress, isShell=False)
+    with open(output_samples, "w") as bc_output:
+        for fastq_file in sum_files:
+            with open(fastq_file, "r") as f_in:
+                shutil.copyfileobj(f_in, bc_output)
 
 
 def ONT_QC_filtering(output_samples, filtered_samples):
@@ -374,8 +367,7 @@ def ONT_QC_filtering(output_samples, filtered_samples):
     # --headcrop: Trim n nucleotides from start of read
     # --tailcrop: Trim n nucleotides from end of read
 
-    cmd_filtering = "gunzip -c {} | chopper -q {} --headcrop {} --tailcrop {} --threads {}| gzip > {}".format(
-        output_samples, str(args.min_read_quality), str(args.headcrop), str(args.tailcrop), str(args.threads), filtered_samples)
+    cmd_filtering = "chopper -i {} -q {} --minlength {} --headcrop {} --tailcrop {} --threads {} | gzip > {}".format(output_samples, str(args.min_read_quality), str(args.length), str(args.headcrop), str(args.tailcrop), str(args.threads), filtered_samples)
 
     # print(cmd_filtering)
     execute_subprocess(cmd_filtering, isShell=True)
@@ -737,7 +729,7 @@ if __name__ == "__main__":
 
         logger.info("\n" + GREEN + BOLD + "STARTING BARCODING" + END_FORMATTING)
 
-        if "unclassified.fastq" in os.listdir(out_barcoding_dir):
+        if any(f.endswith('unclassified.fastq') for f in os.listdir(out_barcoding_dir)):
             logger.info("\n" + YELLOW + BOLD +
                         "Ommiting BARCODING/DEMULTIPLEX" + END_FORMATTING + "\n")
         else:
